@@ -1,0 +1,27 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Install Zig
+        uses: korandoru/setup-zig@v1
+        with:
+          zig-version: master
+      - name: Build
+        run: zig build -Doptimize=ReleaseFast
+      - name: Run tests
+        run: zig build test
+      - name: Run benchmarks
+        run: |
+          zig build bench-mpsc
+          zig build bench-spsc
+          zig build bench-mpsc-vyukov

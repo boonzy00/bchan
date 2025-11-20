@@ -1,0 +1,25 @@
+# Zig build artifacts
+zig-out/
+.zig-cache/
+
+# temporary run outputs and local logs
+/tmp/
+*.log
+bench-mpsc-run-*.txt
+
+# editor / IDE
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+
+# core dumps
+*.core
+
+# Python
+__pycache__/
+
+# Misc
+*.swp
+*~
