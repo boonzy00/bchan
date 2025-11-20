@@ -30,7 +30,7 @@ bchan targets the sweet spot of bounded, lock-free MPSC queues with the followin
 
 ### High-Level Performance Results
 
-On an AMD Ryzen 7 5700G (8 cores, 4.0 GHz base), bchan achieves:
+On an AMD Ryzen 7 5700 (8 cores, 4.0 GHz base), bchan achieves:
 - SPSC: 85+ M msg/s with 64-byte messages.
 - MPSC (4 producers, 1 consumer, 64-msg batches): Mean 160 M msg/s, SD 8.7 M msg/s over 5 runs.
 - Comparison: 8x faster than Vyukov bounded MPMC (19 M msg/s) for equivalent MPSC workloads.
