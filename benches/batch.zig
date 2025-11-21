@@ -59,31 +59,97 @@ pub fn main() !void {
     defer _ = gpa.deinit();
     const a = gpa.allocator();
 
-    const chan = try Channel(u64).init(a, 1_000_000, .MPSC, 4);
-    defer chan.deinit();
+    // Allow runtime overrides via environment variables so a single binary
+    // can be used to run different producer counts / batch sizes.
+    const args = try std.process.argsAlloc(a);
+    defer std.process.argsFree(a, args);
 
-    const producers = 4;
-    const batch_size = 64;
-    // Full production workload for benchmarking.
-    const batches_per_prod = 50_000;
+    const producers = blk: {
+        if (args.len > 1) {
+            const s = args[1];
+            const v = std.fmt.parseInt(usize, s, 10) catch 4;
+            break :blk v;
+        } else break :blk 4;
+    };
+
+    const BATCH_SIZE: usize = 64;
+    const batch_size = blk: {
+        if (args.len > 2) {
+            const s = args[2];
+            const v = std.fmt.parseInt(usize, s, 10) catch BATCH_SIZE;
+            break :blk v;
+        } else break :blk BATCH_SIZE;
+    };
+
+    const batches_per_prod = blk: {
+        if (args.len > 3) {
+            const s = args[3];
+            const v = std.fmt.parseInt(usize, s, 10) catch 50000;
+            break :blk v;
+        } else break :blk 50000;
+    };
+
+    const timeout_secs = blk: {
+        if (args.len > 5) {
+            const s = args[5];
+            const v = std.fmt.parseInt(usize, s, 10) catch 120;
+            break :blk v;
+        } else break :blk 120;
+    };
+
+    const max_producers = blk: {
+        if (args.len > 4) {
+            const s = args[4];
+            const v = std.fmt.parseInt(usize, s, 10) catch producers;
+            break :blk v;
+        } else break :blk producers;
+    };
+
+    const chan = try Channel(u64).init(a, 1_000_000, .MPSC, max_producers);
+    defer chan.deinit();
 
     var timer = try std.time.Timer.start();
 
-    var threads: [producers + 1]std.Thread = undefined;
+    // Simple watchdog to detect hangs during bench runs. If the bench
+    // exceeds `timeout_secs` seconds, print diagnostics and exit.
+    var bench_done: std.atomic.Value(bool) = std.atomic.Value(bool).init(false);
+
+    const WatchdogFn = struct {
+        pub fn f(timer_ptr: *std.time.Timer, timeout_ns: u64, timeout_s: usize, done: *std.atomic.Value(bool)) void {
+            while (timer_ptr.read() < timeout_ns) {
+                if (done.load(.acquire)) return;
+                _ = std.Thread.yield() catch {};
+            }
+            if (!done.load(.acquire)) {
+                std.debug.print("Benchmark timed out after {d} seconds\n", .{timeout_s});
+                std.process.exit(1);
+            }
+        }
+    };
+
+    // Dynamic arrays because `producers` is a runtime value here.
+    var threads = try a.alloc(std.Thread, producers + 1);
+    defer a.free(threads);
 
     // Register all producers up-front in the main thread to avoid races
     // between registration and the consumer/producers starting.
-    var handles: [producers]Channel(u64).ProducerHandle = undefined;
-    for (0..producers) |i| {
+    var handles = try a.alloc(Channel(u64).ProducerHandle, producers);
+    defer a.free(handles);
+    var i: usize = 0;
+    while (i < producers) : (i += 1) {
         handles[i] = try chan.registerProducer();
     }
 
     // Start consumer first so it's ready to drain and wake producers.
+    // Start watchdog thread now that the timer is running.
+    const timeout_ns: u64 = @as(u64, timeout_secs) * 1_000_000_000;
+    var wd_thread = try std.Thread.spawn(.{}, WatchdogFn.f, .{ &timer, timeout_ns, timeout_secs, &bench_done });
+
     threads[producers] = try std.Thread.spawn(.{}, struct {
         fn f(c: *Channel(u64)) void {
             std.debug.print("[bench] consumer started\n", .{});
 
-            var buf: [batch_size]u64 = undefined;
+            var buf: [BATCH_SIZE]u64 = undefined;
 
             // Termination-safe consumer loop: keep receiving until all expected
             // messages are seen or there are no active producers and the queue is empty.
@@ -121,7 +187,7 @@ pub fn main() !void {
         fn f(prod: Channel(u64).ProducerHandle, n: usize) void {
             std.debug.print("[bench] producer start\n", .{});
             var batch: usize = 0;
-            var ptrs: [batch_size]?*u64 = undefined;
+            var ptrs: [BATCH_SIZE]?*u64 = undefined;
 
             while (batch < n) : (batch += 1) {
                 var reserved: usize = 0;
@@ -143,24 +209,30 @@ pub fn main() !void {
         }
     };
 
-    for (0..producers) |i| {
-        const prod_handle = handles[i];
-        threads[i] = try std.Thread.spawn(.{}, ProducerFn.f, .{ prod_handle, batches_per_prod });
+    var pi: usize = 0;
+    while (pi < producers) : (pi += 1) {
+        const prod_handle = handles[pi];
+        threads[pi] = try std.Thread.spawn(.{}, ProducerFn.f, .{ prod_handle, batches_per_prod });
     }
 
     // Join producers then unregister handles
-    for (0..producers) |i| {
-        threads[i].join();
-        std.debug.print("[bench] join producer {d}\n", .{i});
-        chan.unregisterProducer(handles[i]);
-        std.debug.print("[bench] unregistered producer {d}\n", .{i});
+    var ji: usize = 0;
+    while (ji < producers) : (ji += 1) {
+        threads[ji].join();
+        std.debug.print("[bench] join producer {d}\n", .{ji});
+        chan.unregisterProducer(handles[ji]);
+        std.debug.print("[bench] unregistered producer {d}\n", .{ji});
     }
 
     // Join consumer
     threads[producers].join();
 
+    // Signal watchdog that the bench completed and join it.
+    bench_done.store(true, .release);
+    wd_thread.join();
+
     const ns = timer.read();
     const total = @as(f64, @floatFromInt(producers * batches_per_prod * batch_size));
     const mps = total * 1e9 / @as(f64, @floatFromInt(ns)) / 1e6;
-    std.debug.print("Batch (4p1c, 64-msg batches): {d:.2} M msg/s\n", .{mps});
+    std.debug.print("Batch ({d}p1c, {d}-msg batches): {d:.2} M msg/s\n", .{ producers, BATCH_SIZE, mps });
 }

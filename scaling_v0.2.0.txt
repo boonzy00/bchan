@@ -1,0 +1,52 @@
+Building ReleaseFast...
+Running scaling benchmark (mean of 5 runs per config)...
+
+=== 1 producers ===
+run 1... 352.91 M msg/s
+run 2... 349.73 M msg/s
+run 3... 345.20 M msg/s
+run 4... 369.37 M msg/s
+run 5... 366.25 M msg/s
+→ mean: 356.69 M msg/s (based on 5 successful runs)
+
+=== 4 producers ===
+run 1... 797.32 M msg/s
+run 2... 785.40 M msg/s
+run 3... 790.54 M msg/s
+run 4... 806.68 M msg/s
+run 5... 808.73 M msg/s
+→ mean: 797.73 M msg/s (based on 5 successful runs)
+
+=== 16 producers ===
+run 1... 974.71 M msg/s
+run 2... 980.80 M msg/s
+run 3... 927.72 M msg/s
+run 4... 992.16 M msg/s
+run 5... 965.00 M msg/s
+→ mean: 968.07 M msg/s (based on 5 successful runs)
+
+=== 64 producers ===
+run 1... === 64 producers ===
+run 1... Batch (64p1c, 64-msg batches): 730.38 M msg/s
+run 2... Batch (64p1c, 64-msg batches): 743.36 M msg/s
+run 3... Batch (64p1c, 64-msg batches): 733.29 M msg/s
+run 4... Batch (64p1c, 64-msg batches): 724.40 M msg/s
+run 5... Batch (64p1c, 64-msg batches): 737.18 M msg/s
+→ mean: 733.72 M msg/s (based on 5 successful runs)
+
+=== 256 producers ===
+run 1... Batch (256p1c, 64-msg batches): 612.02 M msg/s
+run 2... Batch (256p1c, 64-msg batches): 601.89 M msg/s
+run 3... Batch (256p1c, 64-msg batches): 594.70 M msg/s
+run 4... Batch (256p1c, 64-msg batches): 607.75 M msg/s
+run 5... Batch (256p1c, 64-msg batches): 608.31 M msg/s
+→ mean: 604.93 M msg/s (based on 5 successful runs)
+
+=== 512 producers ===
+run 1... Batch (512p1c, 64-msg batches): 526.12 M msg/s
+run 2... Batch (512p1c, 64-msg batches): 524.29 M msg/s
+run 3... Batch (512p1c, 64-msg batches): 499.09 M msg/s
+run 4... Batch (512p1c, 64-msg batches): 522.16 M msg/s
+run 5... Batch (512p1c, 64-msg batches): 523.65 M msg/s
+→ mean: 519.06 M msg/s (based on 5 successful runs)
+

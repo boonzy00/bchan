@@ -4,7 +4,7 @@
 [![CI](https://github.com/boonzy00/bchan/actions/workflows/ci.yml/badge.svg)](https://github.com/boonzy00/bchan/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Zig](https://img.shields.io/badge/zig-0.15+-orange.svg)](https://ziglang.org/)
-[![Throughput](https://img.shields.io/badge/throughput-156M%20msg%2Fs-orange)]()
+[![Throughput](https://img.shields.io/badge/throughput-968M%20msg%2Fs-orange)]()
 
 A high-performance, lock-free multi-producer single-consumer (MPSC) channel implementation in Zig, designed for low-latency concurrent messaging.
 
@@ -27,7 +27,7 @@ Add to your `build.zig.zon`:
     .version = "0.1.0",
     .dependencies = .{
         .bchan = .{
-            .url = "https://github.com/boonzy00/bchan/archive/refs/tags/v0.1.0.tar.gz",
+            .url = "https://github.com/boonzy00/bchan/archive/refs/tags/v0.2.0.tar.gz",
             .hash = "1220xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", // Run `zig fetch --save <url>` to get the actual hash
         },
     },
@@ -132,17 +132,23 @@ zig build -Doptimize=ReleaseFast
 
 ### Results (AMD Ryzen 7 5700G)
 
-| Configuration | Throughput | Notes |
-|---------------|------------|-------|
-| MPSC (4p1c, 64-msg batches) | 156 M msg/s | Mean of 5 runs |
+| Producers | Throughput | Notes |
+|-----------|------------|-------|
+| 1 | 357 M msg/s | Mean of 5 runs |
+| 4 | 798 M msg/s | Mean of 5 runs |
+| 16 | 968 M msg/s | Mean of 5 runs |
+| 64 | 734 M msg/s | Mean of 5 runs |
+| 256 | 605 M msg/s | Mean of 5 runs |
+| 512 | 519 M msg/s | Mean of 5 runs |
 | SPSC | 85+ M msg/s | Single-threaded |
 | Vyukov MPMC (4p4c) | 19 M msg/s | Reference implementation |
 
 **Performance Comparison:**
 ```
-bchan MPSC (batch)    ██████████████████████████████ 156 M/s
-bchan SPSC            ████████████████ 85 M/s  
-Vyukov MPMC           ███ 19 M/s
+bchan MPSC (batch, 16p) ██████████████████████████████ 968 M/s
+bchan MPSC (batch, 4p)  ████████████████████████████ 798 M/s
+bchan SPSC              ████████████████ 85 M/s  
+Vyukov MPMC             ███ 19 M/s
 ```
 
 *Note: bchan significantly outperforms reference implementations like Vyukov MPMC and crossbeam-rs deque on similar hardware.*
