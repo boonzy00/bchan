@@ -37,6 +37,8 @@ On an AMD Ryzen 7 5700 (8 cores, 4.0 GHz base), bchan achieves:
 
 These results use perf stat with CPU pinning and reflect real-world contention.
 
+v0.2.0 removes the O(P) consumer scan entirely via per-producer generation counters and lazy tail caching; consumer fast-path is now O(1) with a single full scan only on final drain when `active_producers == 0`.
+
 ## 3. Data Structure Layout
 
 bchan's core is the `Channel(T)` struct, parameterized by message type `T`. All fields are cache-line aligned where necessary to prevent false sharing.

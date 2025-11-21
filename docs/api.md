@@ -25,7 +25,13 @@ pub fn init(allocator: std.mem.Allocator, capacity: usize, mode: ChannelMode, ma
 
 - `capacity`: Buffer size (automatically rounded up to next power of 2)
 - `mode`: Channel mode (`.SPSC`, `.MPSC`, `.SPMC`)
-- `max_producers`: Maximum producers for MPSC (ignored for SPSC/SPMC)
+- `max_producers`: Maximum producers for MPSC (non-zero required for `.MPSC`)
+
+Important implementation notes:
+
+- `capacity` is rounded to the next power-of-two and indexing uses `index = pos & mask` to avoid slow modulo operations.
+- For `.MPSC` mode you must pass a non-zero `max_producers`; the producer array and per-producer cached fields are allocated based on this value.
+
 
 #### Deinitialization
 

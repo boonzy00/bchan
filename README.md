@@ -4,7 +4,7 @@
 [![CI](https://github.com/boonzy00/bchan/actions/workflows/ci.yml/badge.svg)](https://github.com/boonzy00/bchan/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Zig](https://img.shields.io/badge/zig-0.15+-orange.svg)](https://ziglang.org/)
-[![Throughput](https://img.shields.io/badge/throughput-156M%20msg%2Fs-orange)]()
+[![Throughput](https://img.shields.io/badge/throughput-968M%20msg%2Fs-orange)]()
 
 A high-performance, lock-free multi-producer single-consumer (MPSC) channel implementation in Zig, designed for low-latency concurrent messaging.
 

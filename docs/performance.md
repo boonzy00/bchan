@@ -57,6 +57,22 @@ Key metrics:
 
 ## Optimization Techniques
 
+### Scaling with generation counters (v0.2.0)
+
+O(P) consumer min-tail scan eliminated. Consumer fast-path now O(1) using per-producer generation counters and lazily invalidated tail cache. Full fresh scan fallback only on final drain (`active_producers == 0`).
+
+Measured on AMD Ryzen 7 5700, Pop!_OS, Zig 0.15, ReleaseFast, 64-msg batches, mean of 5 runs:
+
+| Producers | Throughput       | Notes                          |
+|-----------|------------------|--------------------------------|
+| 1         | 357 M msg/s      |                                |
+| 4         | 798 M msg/s      |                                |
+| 16        | 968 M msg/s      |                                |
+| 64        | 734 M msg/s      | 10k batches/producer           |
+| 256       | 605 M msg/s      | 10k batches/producer           |
+| 512       | 519 M msg/s      | 10k batches/producer, bandwidth limited |
+
+
 ### Batch Operations
 
 Use batch APIs for high-throughput scenarios:
