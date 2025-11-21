@@ -11,6 +11,12 @@ pub fn Channel(comptime T: type) type {
         const Producer = struct {
             tail: std.atomic.Value(u64) align(64) = std.atomic.Value(u64).init(0),
             active: std.atomic.Value(bool) align(64) = std.atomic.Value(bool).init(false),
+            gen: std.atomic.Value(u64) align(64) = std.atomic.Value(u64).init(0),
+            // Consumer-side cached view of this producer's tail and gen.
+            // Updated by the consumer to avoid reloading `tail` when
+            // the producer hasn't changed.
+            cached_tail: u64 = 0,
+            cached_gen: std.atomic.Value(u64) align(64) = std.atomic.Value(u64).init(0),
             reserved: usize = 0,
         };
 
@@ -29,6 +35,7 @@ pub fn Channel(comptime T: type) type {
 
                 ch.buffer[tail & ch.mask] = value;
                 p.tail.store(tail + 1, .release);
+                _ = p.gen.fetchAdd(1, .release);
 
                 if (tail == head) {
                     if (ch.consumer_waiters.load(.monotonic) > 0) {
@@ -74,6 +81,7 @@ pub fn Channel(comptime T: type) type {
                 }
 
                 p.tail.store(tail + n, .release);
+                _ = p.gen.fetchAdd(1, .release);
                 if (tail == head) {
                     if (ch.consumer_waiters.load(.monotonic) > 0) {
                         _ = ch.futex_wake_count.fetchAdd(1, .monotonic);
@@ -138,6 +146,8 @@ pub fn Channel(comptime T: type) type {
                 p.tail.store(tail + count, .release);
                 p.reserved = 0;
 
+                _ = p.gen.fetchAdd(1, .release);
+
                 const head_snapshot = ch.consumer_head.load(.acquire);
                 if (tail == head_snapshot) {
                     if (ch.consumer_waiters.load(.monotonic) > 0) {
@@ -165,6 +175,9 @@ pub fn Channel(comptime T: type) type {
         futex_wait_count: std.atomic.Value(usize) align(64) = std.atomic.Value(usize).init(0),
 
         consumer_cached_min_tail: std.atomic.Value(u64) align(64) = std.atomic.Value(u64).init(0),
+
+        // Hint sized at init time; kept for informational purposes.
+        max_producers_hint: usize = 0,
 
         max_producers: usize = 0,
         producers: []Producer = &[_]Producer{},
@@ -196,6 +209,7 @@ pub fn Channel(comptime T: type) type {
                 .buffer = buffer,
                 .max_producers = max_prods,
                 .producers = producers,
+                .max_producers_hint = if (mode == .MPSC) max_prods else 0,
             };
 
             return self;
@@ -206,6 +220,8 @@ pub fn Channel(comptime T: type) type {
             if (self.producers.len > 0) {
                 self.allocator.free(self.producers);
             }
+            // No separate cached arrays to free; per-producer cached fields
+            // live inside the `producers` allocation which is freed above.
             self.allocator.destroy(self);
         }
 
@@ -213,7 +229,15 @@ pub fn Channel(comptime T: type) type {
             if (self.mode != .MPSC) return error.NotMpscChannel;
             const id = self.next_producer_id.fetchAdd(1, .monotonic);
             if (id >= self.max_producers) return error.TooManyProducers;
-            self.producers[id].active.store(true, .monotonic);
+            // Initialize producer state and bump generation so the consumer
+            // doesn't rely on stale cached values.
+            const p = &self.producers[id];
+            p.tail.store(0, .monotonic);
+            p.reserved = 0;
+            p.cached_tail = 0;
+            p.cached_gen.store(0, .monotonic);
+            p.gen.store(p.gen.load(.monotonic) + 1, .monotonic);
+            p.active.store(true, .monotonic);
             const prev_active = self.active_producers.fetchAdd(1, .monotonic);
             if (prev_active == 0) {
                 _ = self.futex_wake_count.fetchAdd(1, .monotonic);
@@ -224,7 +248,22 @@ pub fn Channel(comptime T: type) type {
 
         pub fn unregisterProducer(self: *Self, handle: ProducerHandle) void {
             if (self.mode != .MPSC or handle.channel != self) return;
-            self.producers[handle.id].active.store(false, .monotonic);
+            const p = &self.producers[handle.id];
+            // Mark inactive first. Use release ordering so that stores
+            // prior to this (tail/gen updates) are visible to a consumer
+            // that observes `active` as false.
+            p.active.store(false, .release);
+            // Optional ordering barrier: store tail to ensure any in-flight
+            // writes are ordered (no-op but may help some architectures).
+            const cur_tail = p.tail.load(.monotonic);
+            _ = p.tail.store(cur_tail, .monotonic);
+            // Bump generation with release ordering to invalidate any
+            // consumer cached view of this producer's tail.
+            _ = p.gen.fetchAdd(1, .release);
+
+            // Decrement active producer count. If this was the last active
+            // producer, wake the consumer so it can do a final authoritative
+            // drain and terminate.
             const prev = self.active_producers.fetchSub(1, .release);
             if (prev == 1) {
                 _ = self.futex_wake_count.fetchAdd(1, .monotonic);
@@ -306,24 +345,48 @@ pub fn Channel(comptime T: type) type {
         inline fn tryReceiveMPSC(self: *Self) ?T {
             const head = self.consumer_head.load(.monotonic);
 
-            // Always scan min_tail for correctness
-            var min_tail = head + self.capacity;
-            for (self.producers) |*p| {
+            var min_tail: u64 = head + @as(u64, self.capacity);
+
+            // Use per-producer generation counters + consumer-side cache.
+            // Only reload a producer's `tail` if its generation changed.
+            var i: usize = 0;
+            while (i < self.producers.len) : (i += 1) {
+                const p = &self.producers[i];
                 if (!p.active.load(.acquire)) continue;
+                const gen = p.gen.load(.acquire);
+                const cached_gen = p.cached_gen.load(.monotonic);
+                if (gen == cached_gen) {
+                    const cached_t = p.cached_tail;
+                    if (cached_t < min_tail) min_tail = cached_t;
+                    continue;
+                }
                 const t = p.tail.load(.acquire);
+                p.cached_tail = t;
+                p.cached_gen.store(gen, .release);
                 if (t < min_tail) min_tail = t;
             }
+
             self.consumer_cached_min_tail.store(min_tail, .release);
 
             // If min_tail == head there are no items available.
             if (min_tail == head) return null;
 
-            // If min_tail was not updated (remained head + capacity) and there
-            // are no active producers, treat as empty. When producers are
-            // active and min_tail == head + capacity it indicates the queue
-            // is full (distance == capacity) and should not be treated as
-            // empty — allow consumption to proceed.
-            if (min_tail == head + @as(u64, self.capacity) and self.active_producers.load(.acquire) == 0) return null;
+            // Safety fallback: if there are no active producers, perform a
+            // full authoritative scan of producer tails (ignoring caches)
+            // to determine emptiness. This handles rare cases where the
+            // consumer's cached view is stale during producer retire and
+            // avoids hanging termination.
+            if (self.active_producers.load(.acquire) == 0) {
+                var full_min: u64 = head + @as(u64, self.capacity);
+                var j: usize = 0;
+                while (j < self.producers.len) : (j += 1) {
+                    const pp = &self.producers[j];
+                    const t = pp.tail.load(.acquire);
+                    if (t < full_min) full_min = t;
+                }
+                self.consumer_cached_min_tail.store(full_min, .release);
+                if (full_min == head) return null;
+            }
 
             const value = self.buffer[head & self.mask];
             self.consumer_head.store(head + 1, .release);
@@ -421,6 +484,24 @@ pub fn Channel(comptime T: type) type {
                     received += 1;
                 } else break;
             }
+
+            // If we didn't receive anything, and there are no active
+            // producers, perform an authoritative fresh scan of all
+            // producer tails (ignore consumer caches). This ensures
+            // that stale cached_tail values from retired producers do
+            // not cause the caller to spin forever.
+            if (received == 0 and self.active_producers.load(.acquire) == 0) {
+                var fresh_min_tail: u64 = self.consumer_head.load(.acquire) + self.capacity;
+                var idx: usize = 0;
+                while (idx < self.producers.len) : (idx += 1) {
+                    const p = &self.producers[idx];
+                    const t = p.tail.load(.acquire);
+                    if (t < fresh_min_tail) fresh_min_tail = t;
+                }
+                if (fresh_min_tail <= self.consumer_head.load(.acquire)) {
+                    return received; // truly empty
+                }
+            }
             return received;
         }
 
@@ -430,9 +511,43 @@ pub fn Channel(comptime T: type) type {
             while (received == 0) {
                 received = self.tryReceiveBatch(buffer);
                 if (received == 0) {
+                    // If there are no active producers left, force an
+                    // authoritative fresh scan of all producer tails to
+                    // avoid stale cached_tail values preventing termination.
+                    if (self.active_producers.load(.acquire) == 0) {
+                        var fresh_min_tail: u64 = self.consumer_head.load(.acquire) + self.capacity;
+                        var kk: usize = 0;
+                        while (kk < self.producers.len) : (kk += 1) {
+                            const pp = &self.producers[kk];
+                            const t = pp.tail.load(.acquire);
+                            if (t < fresh_min_tail) fresh_min_tail = t;
+                        }
+                        if (fresh_min_tail <= self.consumer_head.load(.acquire)) {
+                            return received; // truly empty
+                        }
+                        // else fall through and continue spinning/waiting
+                    }
                     for (0..backoff) |_| std.atomic.spinLoopHint();
                     backoff = @min(backoff * 2, 1024);
                     if (backoff > 512) {
+                        // If there are no active producers left, perform an
+                        // authoritative fresh scan of all producer tails
+                        // (ignore consumer caches) to determine emptiness.
+                        // This prevents a stale cached_tail from keeping the
+                        // consumer spinning forever after all producers retire.
+                        if (self.active_producers.load(.acquire) == 0) {
+                            var real_min_tail: u64 = self.consumer_head.load(.acquire) + self.capacity;
+                            var k: usize = 0;
+                            while (k < self.producers.len) : (k += 1) {
+                                const pp = &self.producers[k];
+                                const t = pp.tail.load(.acquire);
+                                if (t < real_min_tail) real_min_tail = t;
+                            }
+                            if (real_min_tail == self.consumer_head.load(.acquire)) {
+                                return received; // queue empty and no producers
+                            }
+                        }
+
                         const prev = self.consumer_waiters.fetchAdd(1, .monotonic);
                         const expected = @as(u32, prev + 1);
                         received = self.tryReceiveBatch(buffer);
