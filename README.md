@@ -130,7 +130,7 @@ zig build -Doptimize=ReleaseFast
 ./scripts/run_vyukov.sh
 ```
 
-### Results (AMD Ryzen 7 5700G)
+### Results (AMD Ryzen 7 5700)
 
 | Producers | Throughput | Notes |
 |-----------|------------|-------|
