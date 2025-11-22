@@ -130,7 +130,7 @@ zig build -Doptimize=ReleaseFast
 ./scripts/run_vyukov.sh
 ```
 
-### Benchmarks (AMD Ryzen 7 5700G • Zig 0.15.0 • ReleaseFast)
+### Benchmarks (AMD Ryzen 7 5700 • Zig 0.15.0 • ReleaseFast)
 
 | Scenario                  | Producers | Throughput       | Notes                                    |
 |---------------------------|-----------|------------------|------------------------------------------|
